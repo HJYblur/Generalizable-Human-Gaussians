@@ -1,4 +1,4 @@
-import argparse, json
+import argparse, json, re
 from pathlib import Path
 import numpy as np, torch, trimesh, smplx
 
@@ -14,16 +14,33 @@ def load_params(path,pid):
     else: s=d
     return {k:pick(s[k],pid).astype(np.float32) for k in ['betas','global_orient','body_pose','transl']}
 
+
+
+def _seq_index(name: str):
+    m=re.search(r"seq_(\d+)", name)
+    return int(m.group(1)) if m else None
+
+def _filter_seq(mapping, max_seq_id):
+    out={}
+    for k,v in mapping.items():
+        idx=_seq_index(v)
+        if idx is not None and idx <= max_seq_id:
+            out[k]=v
+    return out
+
 def main():
     ap=argparse.ArgumentParser(); ap.add_argument('--raw-root',required=True); ap.add_argument('--out-root',required=True)
     ap.add_argument('--dataset-root',required=True); ap.add_argument('--smpl-model-root',required=True); ap.add_argument('--pose-id',type=int,default=0)
-    ap.add_argument('--gender',default='neutral'); ap.add_argument('--max-subjects',type=int); ap.add_argument('--overwrite',action='store_true'); a=ap.parse_args()
+    ap.add_argument('--gender',default='neutral'); ap.add_argument('--max-subjects',type=int)
+    ap.add_argument('--max-seq-id',type=int,default=99); ap.add_argument('--overwrite',action='store_true'); a=ap.parse_args()
     rr=Path(a.raw_root); out=Path(a.out_root); out.mkdir(parents=True,exist_ok=True)
     mapping_path=Path(a.dataset_root)/'subject_mapping.json'
     if mapping_path.exists(): mapping=json.loads(mapping_path.read_text())
     else:
         raws=[x.strip() for x in (rr/'human_list.txt').read_text().splitlines() if x.strip()]; mapping={f'rp{i:03d}':r for i,r in enumerate(raws)}
+    mapping=_filter_seq(mapping,a.max_seq_id)
     items=sorted(mapping.items())[:a.max_subjects] if a.max_subjects else sorted(mapping.items())
+    print(f'[smpl] using {len(items)} subjects with seq <= {a.max_seq_id}')
     model=smplx.create(model_path=a.smpl_model_root,model_type='smpl',gender=a.gender,batch_size=1,create_global_orient=False,create_body_pose=False,create_betas=False,create_transl=False)
     for sid,raw in items:
         p=rr/raw/'outputs_re_fitting'/'refit_smpl_2nd.npz'

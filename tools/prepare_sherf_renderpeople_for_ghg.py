@@ -1,4 +1,4 @@
-import argparse, json, math
+import argparse, json, math, re
 from pathlib import Path
 import cv2, numpy as np
 from PIL import Image
@@ -14,19 +14,37 @@ def ghg_bin_subview_to_rp_cam(ghg_bin, subview_id, ghg_num_bins=16, rp_num_views
     angle=ghg_bin*ghg_step+local_offset
     return angle_to_rp_cam(angle,rp_num_views)
 
+
+
+def _seq_index(name: str):
+    m=re.search(r"seq_(\d+)", name)
+    return int(m.group(1)) if m else None
+
+def _filter_first_100(raws):
+    kept=[]
+    for r in raws:
+        idx=_seq_index(r)
+        if idx is not None and idx < 100:
+            kept.append(r)
+    return kept
+
 def main():
     ap=argparse.ArgumentParser();
     ap.add_argument('--raw-root',required=True); ap.add_argument('--out-root',required=True)
     ap.add_argument('--phase',default='val'); ap.add_argument('--pose-id',type=int,default=0)
     ap.add_argument('--out-res',type=int,default=1024); ap.add_argument('--num-ghg-bins',type=int,default=16)
     ap.add_argument('--num-rp-views',type=int,default=36); ap.add_argument('--mapping-mode',choices=['index'],default='index')
-    ap.add_argument('--max-subjects',type=int); ap.add_argument('--overwrite',action='store_true'); args=ap.parse_args()
+    ap.add_argument('--max-subjects',type=int); ap.add_argument('--max-seq-id',type=int,default=99)
+    ap.add_argument('--overwrite',action='store_true'); args=ap.parse_args()
     raw_root=Path(args.raw_root); out_root=Path(args.out_root); data_root=out_root/args.phase
     for d in [data_root/'img',data_root/'mask',data_root/'parm']: d.mkdir(parents=True,exist_ok=True)
     human_list=raw_root/'human_list.txt'
     if not human_list.exists(): raise FileNotFoundError(human_list)
     raws=[x.strip() for x in human_list.read_text().splitlines() if x.strip()]
+    raws=_filter_first_100(raws)
+    raws=[r for r in raws if _seq_index(r) is not None and _seq_index(r)<=args.max_seq_id]
     if args.max_subjects: raws=raws[:args.max_subjects]
+    print(f'[prepare] using {len(raws)} subjects with seq <= {args.max_seq_id}')
     mapping={}; splits=[]
     for i,raw in enumerate(raws):
         sid=f'rp{i:03d}'; mapping[sid]=raw; splits.append(sid); print(f'[prepare] {sid} <- {raw}')
