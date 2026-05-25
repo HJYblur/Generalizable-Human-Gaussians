@@ -113,6 +113,7 @@ if __name__ == '__main__':
                         format='%(asctime)s %(levelname)-8s [%(filename)s:%(lineno)d] %(message)s')
     parser = argparse.ArgumentParser()
     parser.add_argument('--test_data_root', type=str, required=True)
+    parser.add_argument('--exp_name', type=str, default='GHG')
     parser.add_argument('--regressor_path', type=str, required=True) # Gaussian Regressor
     parser.add_argument('--inpaintor_path', type=str, required=True) # Inpaint Net
 
@@ -129,14 +130,13 @@ if __name__ == '__main__':
     cfg.defrost()
     cfg.batch_size = 1
     cfg.dataset.test_data_root = arg.test_data_root
+    cfg.dataset.data_root = os.path.dirname(arg.test_data_root)
     cfg.dataset.use_processed_data = False
     cfg.restore_ckpt = arg.regressor_path
     cfg.generator_ckpt = arg.inpaintor_path
 
 
-    exp_name = 'GHG'
-
-    cfg.test_out_path = os.path.join('./outputs/eval',exp_name)
+    cfg.test_out_path = os.path.join('./outputs/eval', arg.exp_name)
 
 
     Path(cfg.test_out_path).mkdir(exist_ok=True, parents=True)

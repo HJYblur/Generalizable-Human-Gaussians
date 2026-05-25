@@ -1,3 +1,4 @@
+import argparse
 '''
 MIT License
 
@@ -181,20 +182,29 @@ def load_obj(file_path):
     return vertices, faces, uvs
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--dataset-root', default='datasets/THuman')
+parser.add_argument('--phase', default='train')
+parser.add_argument('--resolution', type=int, default=1024)
+parser.add_argument('--smplx-uv-obj', default=None)
+parser.add_argument('--overwrite', action='store_true')
+args = parser.parse_args()
+
 num_angles = 16
-phase = 'train'  # 'val' #'train'
-data_root = 'datasets/THuman/{}'.format(phase)
+phase = args.phase
+dataset_root = args.dataset_root
+data_root = os.path.join(dataset_root, phase)
 calib_dir = os.path.join(data_root, 'parm')
 depth_dir = os.path.join(data_root, 'depth')
 human_list = set()
 
 for dir_name in os.listdir(os.path.join(data_root, 'img')):
-    subject_name = dir_name.split('_')[0]
+    subject_name = dir_name.rsplit('_', 1)[0]
     human_list.add(subject_name)
 human_list = list(human_list)
 human_list.sort()
 
-resolution = 1024
+resolution = args.resolution
 
 # image plane shape
 image_height = 1024
@@ -202,7 +212,7 @@ image_width = 1024
 
 glctx = dr.RasterizeCudaContext()
 
-smplx_fp = "datasets/THuman/smplx_uv.obj"
+smplx_fp = args.smplx_uv_obj or os.path.join(dataset_root, "smplx_uv.obj")
 vertices_tpose, faces, uvs = load_obj(smplx_fp)
 
 vertices_tpose = np.array(vertices_tpose)

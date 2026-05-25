@@ -161,8 +161,8 @@ class HumanDataset(Dataset):
 
         sample_id = index % len(self.sample_list)
         sample_name = self.sample_list[sample_id]
-        human = sample_name[:-4]
-        angle = int(sample_name[-3:])
+        human, angle_str = sample_name.rsplit("_", 1)
+        angle = int(angle_str)
 
         # load position map
         pos_name = self.smplx_position_map_path % (human, self.resolution)
@@ -318,8 +318,7 @@ class HumanDataset(Dataset):
 
         sample_id = index % len(self.sample_list)
         sample_name = self.sample_list[sample_id]
-        split = sample_name.split('_')
-        human = split[0]
+        human = sample_name.rsplit("_", 1)[0]
 
         # load position map
         pos_name = self.smplx_position_map_path % (human, self.resolution)
@@ -346,7 +345,7 @@ class HumanDataset(Dataset):
         outer_pos_4 = np.load(outer_pos_4_name)
         outer_pos_4 = torch.from_numpy(outer_pos_4).permute(2, 0, 1)
 
-        input_view = [0, 6, 11]
+        input_view = list(getattr(self.opt, "test_input_view", [0, 6, 11]))
         # if you want to try random inputs, uncomment the following line:
         # input_view = np.random.randint(16,size=3)
 
