@@ -16,7 +16,8 @@ Key facts:
 ```bash
 python tools/prepare_sherf_renderpeople_for_ghg.py --raw-root datasets/RenderPeople/raw_sherf/20230228 --out-root datasets/RenderPeople --phase val --pose-id 0 --out-res 1024 --mapping-mode index
 python tools/export_sherf_smpl_obj.py --raw-root datasets/RenderPeople/raw_sherf/20230228 --dataset-root datasets/RenderPeople --out-root datasets/RenderPeople/transfer/smpl_obj --smpl-model-root datasets/RenderPeople/models --pose-id 0
-# run official SMPL-X transfer externally; input transfer/smpl_obj/*.obj output transfer/smplx_fit/
+# run official SMPL-X transfer via wrapper script (uses your official transfer command)
+python tools/transfer_smpl_obj_to_smplx_obj.py --smpl-obj-root datasets/RenderPeople/transfer/smpl_obj --out-root datasets/RenderPeople/transfer/smplx_fit --command-template "python /path/to/official_transfer.py --input {src} --output {dst}"
 python tools/export_transferred_smplx_obj.py --fit-root datasets/RenderPeople/transfer/smplx_fit --out-root datasets/RenderPeople/val/smplx_obj
 python process_dataset/render_position_map.py --dataset-root datasets/RenderPeople --phase val --resolution 1024 --smplx-uv-obj datasets/RenderPeople/smplx_uv.obj
 python process_dataset/render_visibility_map.py --dataset-root datasets/RenderPeople --phase val --resolution 1024 --smplx-uv-obj datasets/RenderPeople/smplx_uv.obj
