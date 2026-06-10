@@ -29,6 +29,7 @@ import torch.nn.functional as F
 import nvdiffrast.torch as dr
 import sys
 import math
+import argparse
 import trimesh
 import os
 
@@ -182,8 +183,14 @@ def load_obj(file_path):
 
 
 num_angles = 16
-phase = 'train'  # 'val' #'train'
-data_root = 'datasets/THuman/{}'.format(phase)
+ap = argparse.ArgumentParser()
+ap.add_argument('--phase', default='train', choices=['train', 'val'])
+ap.add_argument('--views', default='0,6,11',
+                help='Comma-separated view indices to render, e.g. 0,6,11')
+args = ap.parse_args()
+phase = args.phase
+views = [int(x.strip()) for x in args.views.split(',') if x.strip()]
+data_root = f'datasets/THuman/{phase}'
 calib_dir = os.path.join(data_root, 'parm')
 depth_dir = os.path.join(data_root, 'depth')
 human_list = set()
@@ -252,7 +259,7 @@ for scale_idx in range(5):
 
         vertices = vertices + scale * normals
 
-        for angle_idx in range(num_angles):
+        for angle_idx in views:
 
             angle = str(angle_idx).zfill(3)
 

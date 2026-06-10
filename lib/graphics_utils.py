@@ -29,12 +29,18 @@ def getWorld2View2(R, t, translate=np.array([.0, .0, .0]), scale=1.0):
 
 
 def getProjectionMatrix(znear, zfar, K, h, w):
-    near_fx = znear / K[0, 0]
-    near_fy = znear / K[1, 1]
-    left = - (w - K[0, 2]) * near_fx
-    right = K[0, 2] * near_fx
-    bottom = (K[1, 2] - h) * near_fy
-    top = K[1, 2] * near_fy
+    znear = float(znear)
+    zfar = float(zfar)
+    fx = float(K[0, 0])
+    fy = float(K[1, 1])
+    cx = float(K[0, 2])
+    cy = float(K[1, 2])
+    near_fx = znear / fx
+    near_fy = znear / fy
+    left = - (float(w) - cx) * near_fx
+    right = cx * near_fx
+    bottom = (cy - float(h)) * near_fy
+    top = cy * near_fy
 
     P = torch.zeros(4, 4)
     z_sign = 1.0

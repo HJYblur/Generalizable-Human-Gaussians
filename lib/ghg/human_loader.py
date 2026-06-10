@@ -47,6 +47,7 @@ class HumanDataset(Dataset):
             self.sample_list = sorted(
                 list(os.listdir(
                     os.path.join(data_sub_path, 'position_map_uv_space'))))
+            self.sample_list = sorted([x for x in self.sample_list if x.endswith('_000')])
         else:
             self.sample_list = sorted(
                 list(os.listdir(os.path.join(data_sub_path, 'img'))))
@@ -367,16 +368,21 @@ class HumanDataset(Dataset):
             mask_eroded = mask
             boundary_mask = mask_dilated & (~(mask_eroded))
 
-            boundary_dilated_rgb = (boundary_mask / 255.0) * image_dilated + (1 - boundary_mask / 255.0) * img
+            boundary_dilated_rgb = (boundary_mask[:, :, None] / 255.0) * image_dilated + (1 - boundary_mask[:, :, None] / 255.0) * img
             boundary_dilated_rgb = boundary_dilated_rgb.astype(np.float32)
 
             img = torch.from_numpy(boundary_dilated_rgb).permute(2, 0, 1)
             img = 2 * (img / 255.0) - 1.0
 
 
+            # Ensure mask arrays have a channel dimension
+            if mask_dilated.ndim == 2:
+                mask_dilated = mask_dilated[..., None]
             mask_dilated = torch.from_numpy(mask_dilated).permute(2, 0, 1).float()
             mask_dilated = mask_dilated / 255.0
 
+            if mask.ndim == 2:
+                mask = mask[..., None]
             mask = torch.from_numpy(mask).permute(2, 0, 1).float()
             mask = mask / 255.0
 
