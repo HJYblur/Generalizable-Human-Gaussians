@@ -271,7 +271,10 @@ class Trainer:
     def load_ckpt(self, load_path, load_optimizer=True, strict=True):
         assert os.path.exists(load_path)
         logging.info(f"Loading checkpoint from {load_path} ...")
-        ckpt = torch.load(load_path, map_location='cuda')
+        try:
+            ckpt = torch.load(load_path, map_location='cuda', weights_only=False)
+        except TypeError:
+            ckpt = torch.load(load_path, map_location='cuda')
         self.model.load_state_dict(ckpt['network'], strict=strict)
         logging.info(f"Parameter loading done")
         if load_optimizer:

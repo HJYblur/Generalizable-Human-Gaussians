@@ -61,6 +61,11 @@ class HumanRender:
                     ratio_tmp = (i+0.5)*(1/novel_view_nums)
 
                     data_i = get_eval_calib(data, self.cfg.dataset, data['name'],subangle)
+                    if data_i is None:
+                        logging.warning(
+                            "Skipping sample %s novel view %d because calibration files are missing for subangle %d",
+                            data['name'], i, subangle)
+                        continue
 
                     if bg_color == 'black':
                         data_i = pts2render(data_i, bg_color=[0,0,0],phase='test')
@@ -92,10 +97,28 @@ class HumanRender:
 
         assert os.path.exists(regressor_path)
         logging.info(f"Loading checkpoint from {regressor_path} ...")
-        ckpt = torch.load(regressor_path, map_location='cuda')
+        try:
+            ckpt = torch.load(regressor_path, map_location='cuda', weights_only=False)
+        except TypeError:
+            ckpt = torch.load(regressor_path, map_location='cuda')
+        except Exception as e:
+            logging.warning("torch.load failed for regressor checkpoint: %s", e)
+            try:
+                ckpt = torch.load(regressor_path, map_location='cuda', weights_only=False)
+            except TypeError:
+                raise
 
         missing_keys, unexpected_keys = self.model.load_state_dict(ckpt['network'], strict=False)
-        generator_state_dict = torch.load(inpaintor_path,map_location='cuda')
+        try:
+            generator_state_dict = torch.load(inpaintor_path, map_location='cuda', weights_only=False)
+        except TypeError:
+            generator_state_dict = torch.load(inpaintor_path, map_location='cuda')
+        except Exception as e:
+            logging.warning("torch.load failed for inpaintor checkpoint: %s", e)
+            try:
+                generator_state_dict = torch.load(inpaintor_path, map_location='cuda', weights_only=False)
+            except TypeError:
+                raise
         generator_prefix = 'generator.'
         generator_specific_dict = {generator_prefix + k: v for k, v in
                                    generator_state_dict.items()}
