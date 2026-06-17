@@ -42,8 +42,7 @@ def configure_pyopengl_platform(prefer_gpu=True):
 configure_pyopengl_platform()
 
 
-def save(pid, data_id, vid, save_path, extr, intr, depth, img, mask,
-         img_hr=None):
+def save(pid, data_id, vid, save_path, extr, intr, depth, img, mask):
     img_save_path = os.path.join(save_path, 'img', data_id + '_' + '%03d' % pid)
     depth_save_path = os.path.join(save_path, 'depth',
                                    data_id + '_' + '%03d' % pid)
@@ -62,11 +61,6 @@ def save(pid, data_id, vid, save_path, extr, intr, depth, img, mask,
     img = (np.clip(img, 0, 1) * 255.0 + 0.5).astype(np.uint8)[:, :, ::-1]
     mask = (np.clip(mask, 0, 1) * 255.0 + 0.5).astype(np.uint8)
     cv2.imwrite(os.path.join(img_save_path, '{}.jpg'.format(vid)), img)
-    if img_hr is not None:
-        img_hr = (np.clip(img_hr, 0, 1) * 255.0 + 0.5).astype(np.uint8)[:, :,
-                 ::-1]
-        cv2.imwrite(os.path.join(img_save_path, '{}_hr.jpg'.format(vid)),
-                    img_hr)
     cv2.imwrite(os.path.join(mask_save_path, '{}.png'.format(vid)), mask)
     np.save(os.path.join(parm_save_path, '{}_intrinsic.npy'.format(vid)), intr)
     np.save(os.path.join(parm_save_path, '{}_extrinsic.npy'.format(vid)), extr)
@@ -119,12 +113,11 @@ def _taichi_camera_extrinsic(cam_pos, target, up=TAICHI_CAM_UP):
 
 
 def _gl_cam_pose_from_taichi(cam_pos, target, up=TAICHI_CAM_UP):
-    """OpenGL camera-to-world pose bridging taichi's OpenCV-style view.
+    """OpenGL camera-to-world pose reproducing taichi's rendered orientation.
 
-    taichi projects with c = [right.d, cam_up.d, fwd.d] (an OpenCV pinhole model).
-    The matching OpenGL camera flips the y/z axes, so its rotation columns are
-    [right, -cam_up, -fwd]. With this pose, pyrender's output (it flips rows on
-    read-back) lands directly on taichi's row = fy*c1/c2 + cy, no extra flip.
+    Rotation columns are [right, cam_up, -fwd]: a right-handed GL frame
+    (right x cam_up = -fwd) that looks along +fwd. With cy passed through and
+    no extra row flip, pyrender's read-back lands on taichi's row = cy - fy*c1/c2.
     """
     pos = np.asarray(cam_pos, dtype=np.float64).reshape(3)
     target = np.asarray(target, dtype=np.float64).reshape(3)
@@ -135,7 +128,7 @@ def _gl_cam_pose_from_taichi(cam_pos, target, up=TAICHI_CAM_UP):
     right = right / (np.linalg.norm(right) + 1e-12)
     cam_up = np.cross(right, fwd)
     cam_up = cam_up / (np.linalg.norm(cam_up) + 1e-12)
-    R_cw = np.stack([right, -cam_up, -fwd], axis=1)
+    R_cw = np.stack([right, cam_up, -fwd], axis=1)
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R_cw
     T[:3, 3] = pos
@@ -201,17 +194,21 @@ class StaticRenderer:
         self._mesh_gpu_fingerprint = None
         self.light_nodes = []
         self.N = 10
-        self._offscreen = {}
+        self._renderer = None
         self.camera_light()
 
-    def _offscreen_renderer(self, w, h):
-        key = (int(w), int(h))
-        if key not in self._offscreen:
-            self._offscreen[key] = pyrender.OffscreenRenderer(
-                viewport_width=key[0],
-                viewport_height=key[1],
+    def _get_renderer(self, w, h):
+        # A single OffscreenRenderer (one GL context) resized per call. Using a
+        # separate renderer per size creates multiple contexts; meshes uploaded
+        # in one context render as black in the other.
+        if self._renderer is None:
+            self._renderer = pyrender.OffscreenRenderer(
+                viewport_width=int(w), viewport_height=int(h),
             )
-        return self._offscreen[key]
+        else:
+            self._renderer.viewport_width = int(w)
+            self._renderer.viewport_height = int(h)
+        return self._renderer
 
     def change_all(self):
         self.camera_light()
@@ -253,18 +250,19 @@ class StaticRenderer:
         self._mesh_rev += 1
         self._mesh_gpu_fingerprint = None
 
-    def _ensure_gl_mesh(self, width, height):
+    def _ensure_gl_mesh(self):
+        # Mesh upload is independent of viewport size now that one context is used,
+        # so (re)build only when the model itself changes.
         if self._tm is None:
             return
-        fp = (self._mesh_rev, int(width), int(height))
-        if self._mesh_gpu_fingerprint == fp and self.mesh_node is not None:
+        if self._mesh_gpu_fingerprint == self._mesh_rev and self.mesh_node is not None:
             return
         if self.mesh_node is not None:
             self.scene.remove_node(self.mesh_node)
             self.mesh_node = None
         mesh_pr = pyrender.Mesh.from_trimesh(self._tm, smooth=False)
         self.mesh_node = self.scene.add(mesh_pr, pose=np.eye(4))
-        self._mesh_gpu_fingerprint = fp
+        self._mesh_gpu_fingerprint = self._mesh_rev
 
     def add_model(self, obj, tex=None):
         tm = _obj_to_trimesh(obj, tex)
@@ -289,8 +287,8 @@ class StaticRenderer:
             fx, fy, cx, cy, znear=0.01, zfar=100.0,
         )
         pose = _gl_cam_pose_from_taichi(cam_pos, look_at_center, TAICHI_CAM_UP)
-        r = self._offscreen_renderer(width, height)
-        self._ensure_gl_mesh(width, height)
+        r = self._get_renderer(width, height)
+        self._ensure_gl_mesh()
         cam_node = self.scene.add(cam, pose=pose)
         try:
             color_rgba, depth = r.render(self.scene)
@@ -407,7 +405,7 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
     for pid in range(cam_nums):
         angle = angle_base + pid * degree_interval
 
-        def render(dis, angle, look_at_center, p, render_2k=False):
+        def render(dis, angle, look_at_center, p):
             _yaw = os.environ.get("GHG_ORBIT_YAW_OFFSET_DEG", "").strip()
             yaw_off = float(_yaw) if _yaw else 0.0
             ori_vec = np.array([0, 0, dis], dtype=np.float64)
@@ -428,30 +426,16 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
             _cy = cy - y_min
 
             w0, h0 = int(res[0]), int(res[1])
-            extr, intr, depth_map, img, mask = renderer.render_frame(
+            return renderer.render_frame(
                 w0, h0, fx, fy, _cx, _cy, cam_pos, look_at_center,
             )
 
-            if render_2k:
-                fx2 = res[0] * 0.8 * 2
-                fy2 = res[1] * 0.8 * 2
-                _cx2 = (res[0] * 0.5 - x_min) * 2
-                _cy2 = (res[1] * 0.5 - y_min) * 2
-                w1, h1 = int(res[0] * 2), int(res[1] * 2)
-                _, _, _, img_hr, _ = renderer.render_frame(
-                    w1, h1, fx2, fy2, _cx2, _cy2, cam_pos, look_at_center,
-                )
-                return extr, intr, depth_map, img, mask, img_hr
-
-            return extr, intr, depth_map, img, mask
-
         extr, intr, depth, img, mask = render(dis, angle, look_at_center,
-                                              base_cam_pitch, False)
+                                              base_cam_pitch)
         save(pid, data_id, 0, save_path, extr, intr, depth, img, mask)
         extr, intr, depth, img, mask = render(dis,
                                               (angle + degree_interval) % 360,
-                                              look_at_center, base_cam_pitch,
-                                              False)
+                                              look_at_center, base_cam_pitch)
         save(pid, data_id, 1, save_path, extr, intr, depth, img, mask)
 
         angle1 = (angle + (np.random.uniform() * degree_interval / 2)) % 360
@@ -459,18 +443,15 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
         angle3 = (angle + degree_interval - (
                     np.random.uniform() * degree_interval / 2)) % 360
 
-        extr, intr, depth, img, mask, img_hr = render(dis, angle1,
-                                                      look_at_center,
-                                                      base_cam_pitch, True)
-        save(pid, data_id, 2, save_path, extr, intr, depth, img, mask, img_hr)
-        extr, intr, depth, img, mask, img_hr = render(dis, angle2,
-                                                      look_at_center,
-                                                      base_cam_pitch, True)
-        save(pid, data_id, 3, save_path, extr, intr, depth, img, mask, img_hr)
-        extr, intr, depth, img, mask, img_hr = render(dis, angle3,
-                                                      look_at_center,
-                                                      base_cam_pitch, True)
-        save(pid, data_id, 4, save_path, extr, intr, depth, img, mask, img_hr)
+        extr, intr, depth, img, mask = render(dis, angle1, look_at_center,
+                                              base_cam_pitch)
+        save(pid, data_id, 2, save_path, extr, intr, depth, img, mask)
+        extr, intr, depth, img, mask = render(dis, angle2, look_at_center,
+                                              base_cam_pitch)
+        save(pid, data_id, 3, save_path, extr, intr, depth, img, mask)
+        extr, intr, depth, img, mask = render(dis, angle3, look_at_center,
+                                              base_cam_pitch)
+        save(pid, data_id, 4, save_path, extr, intr, depth, img, mask)
 
 
 if __name__ == '__main__':
