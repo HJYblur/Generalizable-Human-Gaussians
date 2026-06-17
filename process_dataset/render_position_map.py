@@ -88,7 +88,7 @@ def load_obj(file_path):
 
 
 num_angles = 16
-phase = 'train'  # 'val' #'train'
+phase = 'val'  # 'val' #'train'
 data_root = 'datasets/THuman/{}'.format(phase)
 calib_dir = os.path.join(data_root, 'parm')
 depth_dir = os.path.join(data_root, 'depth')
