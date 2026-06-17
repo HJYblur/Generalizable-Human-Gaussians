@@ -168,6 +168,9 @@ class StaticRenderer:
             bg_color=np.array([0.0, 0.0, 0.0, 0.0]),
         )
         self.mesh_node = None
+        self._tm = None
+        self._mesh_rev = 0
+        self._mesh_gpu_fingerprint = None
         self.light_nodes = []
         self.N = 10
         self._offscreen = {}
@@ -218,8 +221,28 @@ class StaticRenderer:
         mat = getattr(tm.visual, 'material', None)
         if mat is not None and hasattr(mat, 'doubleSided'):
             mat.doubleSided = True
-        mesh_pr = pyrender.Mesh.from_trimesh(tm, smooth=False)
+        self._tm = tm
+        self._mesh_rev += 1
+        self._mesh_gpu_fingerprint = None
+
+    def _ensure_gl_mesh(self, width, height):
+        """Rebuild pyrender.Mesh when trimesh or viewport changes.
+
+        Each OffscreenRenderer owns a GL context; a Mesh is bound to the context
+        that first draws it. Alternating 1024 / 2048 renderers otherwise raises
+        ValueError: Mesh is already bound to a context.
+        """
+        if self._tm is None:
+            return
+        fp = (self._mesh_rev, int(width), int(height))
+        if self._mesh_gpu_fingerprint == fp and self.mesh_node is not None:
+            return
+        if self.mesh_node is not None:
+            self.scene.remove_node(self.mesh_node)
+            self.mesh_node = None
+        mesh_pr = pyrender.Mesh.from_trimesh(self._tm, smooth=False)
         self.mesh_node = self.scene.add(mesh_pr, pose=np.eye(4))
+        self._mesh_gpu_fingerprint = fp
 
     def add_model(self, obj, tex=None):
         tm = _obj_to_trimesh(obj, tex)
@@ -249,8 +272,9 @@ class StaticRenderer:
             pfx, pfy, pcx, pcy, znear=0.01, zfar=100.0,
         )
         pose = _gl_cam_pose_from_taichi(cam_pos, look_at_center)
-        cam_node = self.scene.add(cam, pose=pose)
         r = self._offscreen_renderer(width, height)
+        self._ensure_gl_mesh(width, height)
+        cam_node = self.scene.add(cam, pose=pose)
         try:
             color_rgba, depth = r.render(self.scene)
         finally:
@@ -347,7 +371,7 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
     save_modified_obj(smpl_obj_path, list(original_smpl_obj['vi']), output_original_smpl_obj_path)
     np.save(output_transform_path, transform_dict)
 
-    if renderer.mesh_node is not None:
+    if renderer._tm is not None:
         renderer.modify_model(0, obj, texture)
     else:
         renderer.add_model(obj, texture)
