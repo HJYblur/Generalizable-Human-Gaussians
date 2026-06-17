@@ -70,10 +70,11 @@ The test split can be downloaded [here](https://1drv.ms/t/s!Aq9xVNM_DjPG5TtjUHtw
 
 6. Download the smplx_uv.obj from the [official SMPL-X website](https://smpl-x.is.tue.mpg.de/) and place it under `$ROOT/datasets/THuman`.
 
-7.Render RGB images and mask images.
+7. Render RGB images and mask images (uses **pyrender** / OpenGL; install deps from `environment.yml`).
 ```
 python process_dataset/render_image.py
 ```
+On **Linux**, you need a working OpenGL stack for the offscreen renderer (GPU + drivers is typical). For **headless** machines, set `PYOPENGL_PLATFORM=egl` (with EGL/OSMesa available) or use a virtual framebuffer as in your cluster docs; without a GL context pyrender will fail at init.
 
 ### Generate adjusted SMPL-X obj 
 Please download the SMPL-X pkl files from the [official SMPL-X website](https://smpl-x.is.tue.mpg.de/).
