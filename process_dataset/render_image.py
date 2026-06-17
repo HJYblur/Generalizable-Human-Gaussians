@@ -1,3 +1,10 @@
+"""
+Render THuman RGB / depth / masks for GHG using pyrender (replacing taichi_three rasterization).
+
+All **dataset logic** (normalization, orbit, intrinsics, multi-view sampling, transform.npy,
+SMPL exports) matches the original taichi ``render_image.py`` pipeline. Only the **backend**
+rasterizer and how the OpenGL camera/light nodes are posed changed.
+"""
 import math
 import os
 import pickle
@@ -16,17 +23,23 @@ if str(_pdir) not in sys.path:
     sys.path.insert(0, str(_pdir))
 from obj_io import readobj, save_modified_obj
 
-
-def _rotation_x_mat(angle):
-    c, s = math.cos(angle), math.sin(angle)
-    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64)
-
-
-def _rotation_y_mat(angle):
-    c, s = math.cos(angle), math.sin(angle)
-    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float64)
-
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
+
+# Taichi_three.Camera default (left-handed view setup)
+TAICHI_CAM_UP = np.array([0.0, -1.0, 0.0], dtype=np.float64)
+
+def configure_pyopengl_platform(prefer_gpu=True):
+    # Linux only. Pick a headless GL backend when there is no display server.
+    if "PYOPENGL_PLATFORM" in os.environ:
+        return
+    is_headless = (not os.environ.get("DISPLAY")) and (
+        not os.environ.get("WAYLAND_DISPLAY")
+    )
+    if is_headless:
+        os.environ["PYOPENGL_PLATFORM"] = "egl" if prefer_gpu else "osmesa"
+
+
+configure_pyopengl_platform()
 
 
 def save(pid, data_id, vid, save_path, extr, intr, depth, img, mask,
@@ -59,6 +72,16 @@ def save(pid, data_id, vid, save_path, extr, intr, depth, img, mask,
     np.save(os.path.join(parm_save_path, '{}_extrinsic.npy'.format(vid)), extr)
 
 
+def _rotation_x_mat(angle):
+    c, s = math.cos(angle), math.sin(angle)
+    return np.array([[1, 0, 0], [0, c, -s], [0, s, c]], dtype=np.float64)
+
+
+def _rotation_y_mat(angle):
+    c, s = math.cos(angle), math.sin(angle)
+    return np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]], dtype=np.float64)
+
+
 def _rotation_matrix_to_pose_light_dir(forward_world):
     """DirectionalLight in pyrender shines along local -Z; align -Z with forward_world."""
     f = np.asarray(forward_world, dtype=np.float64).reshape(3)
@@ -76,8 +99,8 @@ def _rotation_matrix_to_pose_light_dir(forward_world):
     return T
 
 
-def _taichi_camera_extrinsic(cam_pos, target, up=(0.0, -1.0, 0.0)):
-    """Match taichi_three.Camera.export_extrinsic / set() convention."""
+def _taichi_camera_extrinsic(cam_pos, target, up=TAICHI_CAM_UP):
+    """Match taichi_three.Camera.export_extrinsic / set() (same as original GHG script)."""
     pos = np.asarray(cam_pos, dtype=np.float64).reshape(3)
     target = np.asarray(target, dtype=np.float64).reshape(3)
     upv = np.asarray(up, dtype=np.float64).reshape(3)
@@ -87,17 +110,22 @@ def _taichi_camera_extrinsic(cam_pos, target, up=(0.0, -1.0, 0.0)):
     right = right / (np.linalg.norm(right) + 1e-12)
     cam_up = np.cross(right, fwd)
     cam_up = cam_up / (np.linalg.norm(cam_up) + 1e-12)
-    M = np.stack([right, cam_up, fwd], axis=1)
-    R_ext = M.T
-    t_ext = -R_ext @ pos
+    # taichi export_extrinsic stores R with rows [right, cam_up, fwd], t = -R @ pos.
+    R_ext = np.stack([right, cam_up, fwd], axis=0)
     extrinsic = np.zeros((3, 4), dtype=np.float64)
     extrinsic[:, :3] = R_ext
-    extrinsic[:, 3] = t_ext
+    extrinsic[:, 3] = -R_ext @ pos
     return extrinsic, right, cam_up, fwd
 
 
-def _gl_cam_pose_from_taichi(cam_pos, target, up=(0.0, -1.0, 0.0)):
-    """OpenGL camera node pose (camera to world): +X right, +Y up, -Z view axis."""
+def _gl_cam_pose_from_taichi(cam_pos, target, up=TAICHI_CAM_UP):
+    """OpenGL camera-to-world pose bridging taichi's OpenCV-style view.
+
+    taichi projects with c = [right.d, cam_up.d, fwd.d] (an OpenCV pinhole model).
+    The matching OpenGL camera flips the y/z axes, so its rotation columns are
+    [right, -cam_up, -fwd]. With this pose, pyrender's output (it flips rows on
+    read-back) lands directly on taichi's row = fy*c1/c2 + cy, no extra flip.
+    """
     pos = np.asarray(cam_pos, dtype=np.float64).reshape(3)
     target = np.asarray(target, dtype=np.float64).reshape(3)
     upv = np.asarray(up, dtype=np.float64).reshape(3)
@@ -107,7 +135,7 @@ def _gl_cam_pose_from_taichi(cam_pos, target, up=(0.0, -1.0, 0.0)):
     right = right / (np.linalg.norm(right) + 1e-12)
     cam_up = np.cross(right, fwd)
     cam_up = cam_up / (np.linalg.norm(cam_up) + 1e-12)
-    R_cw = np.stack([right, cam_up, -fwd], axis=1)
+    R_cw = np.stack([right, -cam_up, -fwd], axis=1)
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R_cw
     T[:3, 3] = pos
@@ -115,7 +143,7 @@ def _gl_cam_pose_from_taichi(cam_pos, target, up=(0.0, -1.0, 0.0)):
 
 
 def _obj_to_trimesh(obj, texture_wh_rgb_u8):
-    """Build a textured trimesh from readobj() dict (unwelds corners for UVs)."""
+    """Build textured trimesh from readobj() dict (same unweld UV path as before)."""
     faces = obj['f']
     verts = obj['vi']
     if faces is None or verts is None:
@@ -165,7 +193,7 @@ class StaticRenderer:
     def __init__(self):
         self.scene = pyrender.Scene(
             ambient_light=np.array([0.1, 0.1, 0.1], dtype=np.float64),
-            bg_color=np.array([0.0, 0.0, 0.0, 0.0]),
+            bg_color=np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float64),
         )
         self.mesh_node = None
         self._tm = None
@@ -226,12 +254,6 @@ class StaticRenderer:
         self._mesh_gpu_fingerprint = None
 
     def _ensure_gl_mesh(self, width, height):
-        """Rebuild pyrender.Mesh when trimesh or viewport changes.
-
-        Each OffscreenRenderer owns a GL context; a Mesh is bound to the context
-        that first draws it. Alternating 1024 / 2048 renderers otherwise raises
-        ValueError: Mesh is already bound to a context.
-        """
         if self._tm is None:
             return
         fp = (self._mesh_rev, int(width), int(height))
@@ -254,8 +276,8 @@ class StaticRenderer:
         self._set_mesh_trimesh(tm)
 
     def render_frame(self, width, height, fx, fy, cx, cy, cam_pos, look_at_center):
-        """Render RGB, depth proxy, mask; intrinsics/extrinsics match taichi_three."""
-        extrinsic, _, _, _ = _taichi_camera_extrinsic(cam_pos, look_at_center)
+        """Intrinsics + extrinsics match original taichi script; pyrender draws the view."""
+        extrinsic, _, _, _ = _taichi_camera_extrinsic(cam_pos, look_at_center, TAICHI_CAM_UP)
         intrinsic = np.zeros((3, 3), dtype=np.float64)
         intrinsic[0, 0] = fx
         intrinsic[1, 1] = fy
@@ -263,15 +285,10 @@ class StaticRenderer:
         intrinsic[1, 2] = cy
         intrinsic[2, 2] = 1.0
 
-        if sys.platform == 'darwin':
-            pfx, pfy, pcx, pcy = fx * 0.5, fy * 0.5, cx * 0.5, cy * 0.5
-        else:
-            pfx, pfy, pcx, pcy = fx, fy, cx, cy
-
         cam = pyrender.IntrinsicsCamera(
-            pfx, pfy, pcx, pcy, znear=0.01, zfar=100.0,
+            fx, fy, cx, cy, znear=0.01, zfar=100.0,
         )
-        pose = _gl_cam_pose_from_taichi(cam_pos, look_at_center)
+        pose = _gl_cam_pose_from_taichi(cam_pos, look_at_center, TAICHI_CAM_UP)
         r = self._offscreen_renderer(width, height)
         self._ensure_gl_mesh(width, height)
         cam_node = self.scene.add(cam, pose=pose)
@@ -286,10 +303,6 @@ class StaticRenderer:
         zbuf[valid] = 1.0 / (depth[valid] + 1e-8)
         mask = np.zeros((depth.shape[0], depth.shape[1], 3), dtype=np.float64)
         mask[valid] = 1.0
-
-        img = np.swapaxes(img, 0, 1)
-        zbuf = np.swapaxes(zbuf, 0, 1)
-        mask = np.swapaxes(mask, 0, 1)
 
         return (
             extrinsic.astype(np.float32),
@@ -395,9 +408,11 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
         angle = angle_base + pid * degree_interval
 
         def render(dis, angle, look_at_center, p, render_2k=False):
+            _yaw = os.environ.get("GHG_ORBIT_YAW_OFFSET_DEG", "").strip()
+            yaw_off = float(_yaw) if _yaw else 0.0
             ori_vec = np.array([0, 0, dis], dtype=np.float64)
             rot = np.matmul(
-                _rotation_y_mat(math.radians(angle)),
+                _rotation_y_mat(math.radians(angle + yaw_off)),
                 _rotation_x_mat(math.radians(p)),
             )
             fwd = rot @ ori_vec
@@ -475,7 +490,7 @@ if __name__ == '__main__':
 
     for phase in ['train', 'val']:
 
-        split_file = os.path.join(source_root,'split_{}.txt'.format(phase))
+        split_file = os.path.join(source_root, 'split_{}.txt'.format(phase))
         thuman_list = []
 
         with open(split_file, 'r') as f:
