@@ -128,7 +128,7 @@ def _gl_cam_pose_from_taichi(cam_pos, target, up=TAICHI_CAM_UP):
     right = right / (np.linalg.norm(right) + 1e-12)
     cam_up = np.cross(right, fwd)
     cam_up = cam_up / (np.linalg.norm(cam_up) + 1e-12)
-    R_cw = np.stack([right, cam_up, -fwd], axis=1)
+    R_cw = np.stack([-right, -cam_up, -fwd], axis=1)
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R_cw
     T[:3, 3] = pos
@@ -233,7 +233,7 @@ class StaticRenderer:
             d = d / (np.linalg.norm(d) + 1e-12)
             light = pyrender.DirectionalLight(
                 color=np.ones(3, dtype=np.float64),
-                intensity=2.5,
+                intensity=5,
             )
             pose = _rotation_matrix_to_pose_light_dir(d)
             node = self.scene.add(light, pose=pose)
