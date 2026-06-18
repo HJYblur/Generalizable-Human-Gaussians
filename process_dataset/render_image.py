@@ -4,6 +4,10 @@ Render THuman RGB / depth / masks for GHG using pyrender (replacing taichi_three
 All **dataset logic** (normalization, orbit, intrinsics, multi-view sampling, transform.npy,
 SMPL exports) matches the original taichi ``render_image.py`` pipeline. Only the **backend**
 rasterizer and how the OpenGL camera/light nodes are posed changed.
+
+Orbit, height offset, XZ shift, in-between view angles, and directional-light tilts are
+**fixed** (no RNG) so runs are reproducible; THuman still gets a per-subject azimuth offset
+from ``smplx_param.pkl`` ``global_orient`` when ``is_thuman`` is True.
 """
 import math
 import os
@@ -224,9 +228,10 @@ class StaticRenderer:
                 pass
         self.light_nodes = []
         light_dir = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-        for l in range(6):
+        for l in range(12):
+            # Fixed tilt (was random in [-30°, 30°]); 0° keeps lights in the XY plane.
             rot = np.matmul(
-                _rotation_x_mat(math.radians(np.random.uniform(-30, 30))),
+                _rotation_x_mat(0.0),
                 _rotation_y_mat(math.radians(360 // 6 * l)),
             )
             d = rot @ light_dir
@@ -332,8 +337,7 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
 
     vy_max = np.max(obj['vi'][:, 1])
     vy_min = np.min(obj['vi'][:, 1])
-    height_delta = np.random.uniform(-0.05, 0.05, 1)
-    print(height_delta)
+    height_delta = np.array([0.0], dtype=np.float64)
     human_height = 1.80 + height_delta
     obj['vi'][:, :3] = obj['vi'][:, :3] / (vy_max - vy_min) * human_height
     offset = np.min(obj['vi'][:, 1])
@@ -357,9 +361,8 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
     if delta_x > 1.0 or delta_z > 1.0:
         move_range = 0.01
 
-    move_delta_axis_0 = np.random.uniform(-move_range, move_range, 1)
-    move_delta_axis_2 = np.random.uniform(-move_range, move_range, 1)
-    print(move_delta_axis_0)
+    move_delta_axis_0 = np.array([0.0], dtype=np.float64)
+    move_delta_axis_2 = np.array([0.0], dtype=np.float64)
     obj['vi'][:, 0] += move_delta_axis_0
     obj['vi'][:, 2] += move_delta_axis_2
     output_obj_path = os.path.join(data_path, data_id,
@@ -388,10 +391,8 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
         renderer.add_model(obj, texture)
 
     degree_interval = 360 / cam_nums
-    angle_list1 = list(range(360 - int(degree_interval // 2), 360))
-    angle_list2 = list(range(0, 0 + int(degree_interval // 2)))
-    angle_list = angle_list1 + angle_list2
-    angle_base = np.random.choice(angle_list, 1)[0]
+    # Fixed orbit phase (was random choice from the original half-interval buckets).
+    angle_base = 0
 
     if is_thuman:
         smpl_path = os.path.join(smplx_path, data_id,
@@ -438,10 +439,11 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
                                               look_at_center, base_cam_pitch)
         save(pid, data_id, 1, save_path, extr, intr, depth, img, mask)
 
-        angle1 = (angle + (np.random.uniform() * degree_interval / 2)) % 360
-        angle2 = (angle + degree_interval / 2) % 360
-        angle3 = (angle + degree_interval - (
-                    np.random.uniform() * degree_interval / 2)) % 360
+        # Fixed interpolants between azimuth `angle` and `angle + degree_interval`
+        # (was random in each half-interval): ¼, ½, ¾ of the interval.
+        angle1 = (angle + 0.25 * degree_interval) % 360
+        angle2 = (angle + 0.5 * degree_interval) % 360
+        angle3 = (angle + 0.75 * degree_interval) % 360
 
         extr, intr, depth, img, mask = render(dis, angle1, look_at_center,
                                               base_cam_pitch)
@@ -455,8 +457,6 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
 
 
 if __name__ == '__main__':
-
-    np.random.seed(42)
 
     cam_nums = 16
     scene_radius = 2.0
