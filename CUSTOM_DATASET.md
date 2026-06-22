@@ -87,7 +87,7 @@ $ROOT/datasets
        └── SMPLX_MALE.pkl        
 ```
 
-During the rendering process, 3D scans are randomly transformed. To generate the matching SMPL-X obj, run the following command:
+During rendering, scans use a **fixed** height offset (0) and XZ shift (0) so runs are reproducible; THuman subjects still get a per-scan azimuth offset from SMPL-X `global_orient`. To generate the matching SMPL-X obj, run the following command:
 ```
 python process_dataset/generate_smplx_obj.py
 ```

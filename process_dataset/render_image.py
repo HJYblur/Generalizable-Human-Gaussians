@@ -94,7 +94,7 @@ class StaticRenderer:
         light_list = []
         for l in range(6):
             rotate = np.matmul(
-                rotationX(math.radians(np.random.uniform(-30, 30))),
+                rotationX(0.0),
                 rotationY(math.radians(360 // 6 * l)))
             dir = [*np.matmul(rotate, light_dir)]
             light = t3.Light(dir, color=[1.0, 1.0, 1.0])
@@ -129,8 +129,7 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
     ### 1. original scan
     vy_max = np.max(obj['vi'][:, 1])
     vy_min = np.min(obj['vi'][:, 1])
-    height_delta = np.random.uniform(-0.05, 0.05, 1)
-    print(height_delta)
+    height_delta = np.array([0.0], dtype=np.float64)
     human_height = 1.80 + height_delta
     obj['vi'][:, :3] = obj['vi'][:, :3] / (vy_max - vy_min) * human_height
     offset = np.min(obj['vi'][:, 1])
@@ -150,7 +149,7 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
     look_at_center = np.array([0, 0.85, 0])
     base_cam_pitch = -8
 
-    # randomly move the scan
+    # optional XZ shift (fixed at 0 for reproducibility)
 
     ### 1. original scan
 
@@ -160,9 +159,8 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
     if delta_x > 1.0 or delta_z > 1.0:
         move_range = 0.01
 
-    move_delta_axis_0 = np.random.uniform(-move_range, move_range, 1)
-    move_delta_axis_2 = np.random.uniform(-move_range, move_range, 1)
-    print(move_delta_axis_0)
+    move_delta_axis_0 = np.array([0.0], dtype=np.float64)
+    move_delta_axis_2 = np.array([0.0], dtype=np.float64)
     obj['vi'][:, 0] += move_delta_axis_0
     obj['vi'][:, 2] += move_delta_axis_2
     output_obj_path = os.path.join(data_path, data_id,
@@ -197,10 +195,7 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
 
 
     degree_interval = 360 / cam_nums
-    angle_list1 = list(range(360 - int(degree_interval // 2), 360))
-    angle_list2 = list(range(0, 0 + int(degree_interval // 2)))
-    angle_list = angle_list1 + angle_list2
-    angle_base = np.random.choice(angle_list, 1)[0]
+    angle_base = 0
 
     if is_thuman:
         # thuman needs a normalization of orientation
@@ -273,11 +268,10 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
                                               renderer)
         save(pid, data_id, 1, save_path, extr, intr, depth, img, mask)
 
-        # three novel viewpoints between source views
-        angle1 = (angle + (np.random.uniform() * degree_interval / 2)) % 360
-        angle2 = (angle + degree_interval / 2) % 360
-        angle3 = (angle + degree_interval - (
-                    np.random.uniform() * degree_interval / 2)) % 360
+        # Fixed interpolants between azimuth `angle` and `angle + degree_interval`
+        angle1 = (angle + 0.25 * degree_interval) % 360
+        angle2 = (angle + 0.5 * degree_interval) % 360
+        angle3 = (angle + 0.75 * degree_interval) % 360
 
         extr, intr, depth, img, mask, img_hr = render(dis, angle1,
                                                       look_at_center,
@@ -297,8 +291,6 @@ def render_data(renderer, smplx_path, data_path, phase, data_id, save_path, cam_
 
 
 if __name__ == '__main__':
-
-    np.random.seed(42)
 
     cam_nums = 16
     scene_radius = 2.0
