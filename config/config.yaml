@@ -38,3 +38,9 @@ gsnet:
 record:
   loss_freq: 200
   eval_freq: 200
+
+metrics:
+  use_crop: false
+  image_size: 1024
+  crop_height: 1000
+  crop_width: 500

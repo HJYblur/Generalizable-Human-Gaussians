@@ -61,6 +61,12 @@ class HumanConfig:
         self.cfg.record.loss_freq = 0
         self.cfg.record.eval_freq = 0
 
+        self.cfg.metrics = CN()
+        self.cfg.metrics.use_crop = False
+        self.cfg.metrics.image_size = 1024
+        self.cfg.metrics.crop_height = 1000
+        self.cfg.metrics.crop_width = 500
+
     def get_cfg(self):
         return self.cfg.clone()
 
